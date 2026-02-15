@@ -2,33 +2,69 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>程序六十三：標準辨識與自動解答版</title>
+    <title>程序七十一：座標絕對鎖定版</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady()"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
-        :root { --p: #00D4FF; --ans: #00FF41; --bg: #121212; }
+        :root { --p: #00D4FF; --ans: #00FF41; --bg: #121212; --org: #FF8C00; }
         body { background: var(--bg); color: #fff; font-family: monospace; margin: 0; padding: 10px; }
         .main-layout { display: flex; flex-direction: row; gap: 15px; justify-content: center; }
-        #log { flex: 0 0 320px; background: #000; color: #fff; height: 92vh; padding: 10px; border: 1px solid #333; overflow-y: auto; font-size: 11px; }
-        #grid { display: grid; grid-template-columns: repeat(9, 1fr); width: 450px; background: #fff; border: 4px solid #fff; }
-        .cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; background: #222; font-size: 26px; border: 1px solid #444; color: var(--p); font-weight: bold; }
-        .cell.solved { color: var(--ans); } /* 解答數字顯示綠色 */
-        .controls { display: flex; flex-direction: column; gap: 5px; }
-        button { width: 100%; padding: 15px; background: var(--p); color: #000; font-weight: bold; cursor: pointer; border: none; }
-        button:disabled { background: #444; color: #888; }
+        #log { flex: 0 0 300px; background: #000; height: 92vh; padding: 10px; border: 1px solid #333; overflow-y: auto; font-size: 11px; }
+        
+        /* 核心修正：座標絕對鎖定容器 */
+        #grid-container {
+            width: 450px;
+            height: 450px;
+            position: relative;
+            background: var(--org); /* 底圖畫線 */
+            padding: 5px; /* 形成最外圈橘線 */
+            box-sizing: border-box;
+        }
+
+        #grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            grid-template-rows: repeat(3, 1fr);
+            width: 100%;
+            height: 100%;
+            gap: 5px; /* 這就是九大方框的橘色粗線 */
+        }
+
+        .sub-grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 1px; /* 小格子細縫 */
+            background: #444; 
+        }
+
+        .cell { 
+            background: #222;
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            font-size: 26px; 
+            color: var(--p); 
+            font-weight: bold;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* 防止文字撐大容器導致變調 */
+        }
+
+        .cell.solved { color: var(--ans); }
+        button { width: 100%; padding: 15px; margin-top: 10px; background: var(--p); color: #000; font-weight: bold; cursor: pointer; border: none; }
         #v { width: 400px; height: 300px; background: #000; }
         canvas { display: block; border: 1px solid #555; margin-top: 5px; }
     </style>
 </head>
 <body>
 <div class="main-layout">
-    <div id="log">日誌：標準範本載入中...</div>
+    <div id="log">日誌：正在執行零變調座標鎖定...</div>
     <div class="center-side">
-        <div id="grid"></div>
-        <div class="controls">
-            <button id="run" disabled>📸 執行標準辨識</button>
-            <button id="solve" disabled>🧩 一鍵自動解答</button>
+        <div id="grid-container">
+            <div id="grid"></div>
         </div>
+        <button id="run" disabled>📸 執行標準辨識</button>
+        <button id="solve">🧩 一鍵解答</button>
     </div>
     <div class="camera-panel">
         <video id="v" autoplay playsinline muted></video>
@@ -37,33 +73,39 @@
 </div>
 
 <script>
+    // 邏輯沿用程序六十二（物理比例辨識範本）
     let cvReady = false, videoReady = false;
-    const v = document.getElementById('v'), btnRun = document.getElementById('run'), btnSolve = document.getElementById('solve'), log = document.getElementById('log'), grid = document.getElementById('grid'), cWarp = document.getElementById('c_warp');
+    const v = document.getElementById('v'), btnRun = document.getElementById('run'), log = document.getElementById('log'), grid = document.getElementById('grid'), cWarp = document.getElementById('c_warp');
 
-    // 1. 標準鏡頭與環境啟動
+    // 建立穩定的實體結構映射
+    const cellMap = {};
+    for(let b=0; b<9; b++) {
+        const sub = document.createElement('div');
+        sub.className = 'sub-grid';
+        for(let c=0; c<9; c++) {
+            const d = document.createElement('div');
+            d.className = 'cell';
+            const row = Math.floor(b/3)*3 + Math.floor(c/3);
+            const col = (b%3)*3 + (c%3);
+            const id = row * 9 + col;
+            d.id = 'cell' + id;
+            sub.appendChild(d);
+            cellMap[id] = d;
+        }
+        grid.appendChild(sub);
+    }
+
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => {
         v.srcObject = s; v.onloadedmetadata = () => { v.play(); videoReady = true; checkInit(); };
     });
     function onOpenCvReady() { cvReady = true; checkInit(); }
-    function checkInit() { if(cvReady && videoReady) { btnRun.disabled = false; addLog("環境就緒"); } }
+    function checkInit() { if(cvReady && videoReady) btnRun.disabled = false; }
 
-    function addLog(m) {
-        const d = document.createElement('div'); d.innerText = `> ${m}`;
-        log.appendChild(d); log.scrollTop = log.scrollHeight;
-    }
-
-    for(let i=0; i<81; i++) {
-        const d = document.createElement('div'); d.className = 'cell'; d.id = 'cell'+i; grid.appendChild(d);
-    }
-
-    // 2. 標準範本辨識邏輯 (程序六十二內容)
     btnRun.onclick = async () => {
-        btnRun.disabled = true; btnSolve.disabled = true;
-        for(let i=0; i<81; i++) { grid.children[i].innerText = ""; grid.children[i].classList.remove('solved'); }
-        
+        btnRun.disabled = true;
+        for(let i=0; i<81; i++) { cellMap[i].innerText = ""; cellMap[i].classList.remove('solved'); }
         const worker = await Tesseract.createWorker('eng');
         await worker.setParameters({ tessedit_char_whitelist: '123456789', tessedit_pageseg_mode: '10' });
-
         try {
             const tmpC = document.createElement('canvas'); tmpC.width = v.videoWidth; tmpC.height = v.videoHeight;
             tmpC.getContext('2d').drawImage(v, 0, 0);
@@ -71,8 +113,8 @@
             let gray = new cv.Mat(), thresh = new cv.Mat();
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-            let contours = new cv.MatVector(), hierarchy = new cv.Mat();
-            cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            let contours = new cv.MatVector();
+            cv.findContours(thresh, contours, new cv.Mat(), cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
             let best = null, maxA = 0;
             for(let i=0; i<contours.size(); i++) {
                 let area = cv.contourArea(contours.get(i));
@@ -83,7 +125,6 @@
                 }
             }
             if(!best) throw new Error("定位失敗");
-
             let pts = []; for(let i=0; i<4; i++) pts.push({x:best.data32S[i*2], y:best.data32S[i*2+1]});
             let sum = pts.map(p => p.x+p.y), diff = pts.map(p => p.x-p.y);
             let sorted = [pts[sum.indexOf(Math.min(...sum))], pts[diff.indexOf(Math.max(...diff))], pts[sum.indexOf(Math.max(...sum))], pts[diff.indexOf(Math.min(...diff))]];
@@ -94,67 +135,45 @@
             let ocrMat = new cv.Mat();
             cv.threshold(warped, ocrMat, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
             cv.imshow(cWarp, ocrMat); 
-
             const sW = w / 9, sH = h / 9;
             for(let i=0; i<81; i++) {
                 const r = Math.floor(i / 9), c = i % 9;
-                let cell = ocrMat.roi(new cv.Rect(c*sW+2, r*sH+2, sW-4, sH-4));
-                const sample = document.createElement('canvas'); sample.width = 40; sample.height = 40;
-                cv.imshow(sample, cell);
-                const res = await worker.recognize(sample);
-                const val = res.data.text.trim();
-                if(/^[1-9]$/.test(val)) {
-                    document.getElementById('cell' + i).innerText = val;
-                }
-                cell.delete();
+                let cellData = ocrMat.roi(new cv.Rect(c*sW+2, r*sH+2, sW-4, sH-4));
+                const canvas = document.createElement('canvas'); canvas.width = 40; canvas.height = 40;
+                cv.imshow(canvas, cellData);
+                const res = await worker.recognize(canvas);
+                if(/^[1-9]$/.test(res.data.text.trim())) cellMap[i].innerText = res.data.text.trim();
+                cellData.delete();
             }
-            addLog("辨識完成，可執行解答");
-            btnSolve.disabled = false;
             await worker.terminate();
-        } catch(e) { addLog(e.message); }
+        } catch(e) { console.error(e); }
         finally { btnRun.disabled = false; }
     };
 
-    // 3. 標準數獨解答邏輯 (不修改辨識結果)
-    btnSolve.onclick = () => {
-        let board = [];
-        for(let i=0; i<81; i++) {
-            let val = document.getElementById('cell'+i).innerText;
-            board.push(val === "" ? 0 : parseInt(val));
-        }
-
-        if(solveSudoku(board)) {
+    document.getElementById('solve').onclick = () => {
+        let b = [];
+        for(let i=0; i<81; i++) b.push(cellMap[i].innerText === "" ? 0 : parseInt(cellMap[i].innerText));
+        if(solve(b)) {
             for(let i=0; i<81; i++) {
-                let cell = document.getElementById('cell'+i);
-                if(cell.innerText === "") {
-                    cell.innerText = board[i];
-                    cell.classList.add('solved');
+                if(cellMap[i].innerText === "") {
+                    cellMap[i].innerText = b[i];
+                    cellMap[i].classList.add('solved');
                 }
             }
-            addLog("解答成功！");
-        } else {
-            addLog("此題無解，請核對辨識結果");
         }
     };
-
-    function solveSudoku(b) {
-        let empty = b.indexOf(0);
-        if(empty === -1) return true;
-        let r = Math.floor(empty/9), c = empty%9;
+    function solve(b) {
+        let e = b.indexOf(0); if(e===-1) return true;
+        let r=Math.floor(e/9), c=e%9;
         for(let v=1; v<=9; v++) {
-            if(isValid(b, r, c, v)) {
-                b[empty] = v;
-                if(solveSudoku(b)) return true;
-                b[empty] = 0;
-            }
+            if(isValid(b,r,c,v)) { b[e]=v; if(solve(b)) return true; b[e]=0; }
         }
         return false;
     }
-
-    function isValid(b, r, c, v) {
-        for(let i=0; i<9; i++) if(b[r*9+i] === v || b[i*9+c] === v) return false;
-        let rr = Math.floor(r/3)*3, cc = Math.floor(c/3)*3;
-        for(let i=0; i<3; i++) for(let j=0; j<3; j++) if(b[(rr+i)*9+(cc+j)] === v) return false;
+    function isValid(b,r,c,v) {
+        for(let i=0; i<9; i++) if(b[r*9+i]===v || b[i*9+c]===v) return false;
+        let rr=Math.floor(r/3)*3, cc=Math.floor(c/3)*3;
+        for(let i=0; i<3; i++) for(let j=0; j<3; j++) if(b[(rr+i)*9+(cc+j)]===v) return false;
         return true;
     }
 </script>
